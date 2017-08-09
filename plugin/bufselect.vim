@@ -43,7 +43,7 @@
 "
 "               You may use the default keymappings of
 "
-"                 <Leader>bs  - Opens the bufselect window
+"                 <Leader>ls  - Opens the bufselect window
 "
 "               Or you can override the defaults and define your own mapping
 "               in your vimrc file by setting the g:BufSelectToggleKey
@@ -62,7 +62,7 @@
 "                 ":BufSelect" - Opens bufselect window
 "
 "               For more help see supplied documentation.
-"      History: See supplied documentation.
+"      History: -
 "=============================================================================
  
 " Exit quickly if already running or when 'compatible' is set.
@@ -78,10 +78,10 @@ command! BufSelect :call BufSelect()
  
 " SetupVariable(variable, default)
 " - checks if the variable is already set (in .vimrc for example)
-" - if the variable is not set, the default value will be set
+" - if the variable is not set, the default value will be applied
 function! s:SetupVariable(varname, default)
     if !exists(a:varname)
-        if type(a:default)==0
+        if type(a:default) == 0
             execute "let ".a:varname." = ".a:default
         else
             execute "let ".a:varname." = ".string(a:default)
@@ -92,15 +92,20 @@ endfunction
 " Setup global variables for customization
 call s:SetupVariable("g:bufSelectOpenOnTop", 0)
 call s:SetupVariable("g:bufSelectWindowLines", 10)
-call s:SetupVariable("g:bufSelectToggleKey", "<leader>bs")
+call s:SetupVariable("g:bufSelectToggleKey", "<leader>ls")
 execute "nmap ".g:bufSelectToggleKey." <Esc>:call BufSelect()<CR>"
  
-" Global & script variables
+" Script variables
 let s:bufSelectCurrentWindow=0
 let s:RestoreWindowState=""
 let s:bufSelectCurrentFileList=[]
  
- 
+" BufSelectEnter()
+" - clear bufselects buffer keymap
+" - close bufselcts window
+" - restore the window layout
+" - jump to the the window where bufselect was started
+" - open the buffer in that window which was selected
 function! BufSelectEnter()
     let l:file = s:bufSelectCurrentFileList[line(".") - 1]
     mapclear  <buffer>
@@ -113,6 +118,11 @@ function! BufSelectEnter()
     echo
 endfunction
  
+" BufSelectLeave()
+" - clear bufselects buffer keymap
+" - close bufselcts window
+" - restore the window layout
+" - jump to the the window where bufselect was started
 function! BufSelectLeave()
     mapclear  <buffer>
     mapclear! <buffer>
@@ -123,6 +133,12 @@ function! BufSelectLeave()
     echo
 endfunction
  
+" BufSelect()
+" - parse vims buffers command output
+" - open bufselct window
+" - print buffers command output and remember which
+"   line represent which buffer-number
+" - set keymap to disable normal vim commands or window-switches
 function! BufSelect()
     echo
     let bt = &buftype
@@ -134,37 +150,70 @@ function! BufSelect()
     let s:bufSelectCurrentFileList=[]
     let PrintFileList=[]
     let s:bufSelectCurrentWindow = winnr()
-    let currentbuffer = bufname("%")
     let currentbuffer_idx = 0
     let idx = 1
-    while idx <= bufnr("$")
-        if buflisted(idx)
-            if bufname(idx) == currentbuffer
-                let currentbuffer_idx = len(PrintFileList) + 1
-            endif
-            let fname = bufname(idx)
-            let line = printf("%3s: %-35s %9s", idx
-                                        \ , pathshorten(fname)
-                                        \ , getfperm(fname))
-            call add(PrintFileList, line)
-            call add(s:bufSelectCurrentFileList, idx)
+    " get current buffer-list from vims buffers command
+    redir => buffers_output
+        silent buffers
+    redir END
+    " calculate the best width for filename
+    let filewidth = 0
+    let maxfilelen = 0
+    let maxfilewidth = winwidth(s:bufSelectCurrentWindow) - 21
+    for bufline in split(buffers_output, '\n')
+        let bufwords = split(bufline, '\s *')
+        if maxfilelen <= strlen(bufwords[-3])
+            let maxfilelen = strlen(bufwords[-3])
         endif
-        let idx += 1
-    endwhile
+    endfor
+    if maxfilelen >= maxfilewidth
+        let filewidth = maxfilewidth
+    else
+        let filewidth = maxfilelen
+    endif
+    "if filewidth <= 25
+    "    echomsg "Your window is to small to show the buffers correctly."
+    "endif
+    " get bufnr, bufattributes, bufname and current line number
+    for bufline in split(buffers_output, '\n')
+        let bufnr = str2nr(substitute(strpart(bufline, 0, 3), ' ', '', 'g'))
+        let bufattr = strpart(bufline, 4, 4)
+        let bufwords = split(strpart(bufline, 8), '\s *')
+        let bufname = bufwords[0]
+        let buflnr = bufwords[2]
+        " if filename is to long, strip the left side
+        if strlen(bufname) > filewidth
+            let s = strlen(bufname) - filewidth + 3
+            let bufname = '.."'.strpart(bufname, s)
+        endif
+        let line = printf("%3s: %-4s %-".filewidth."s Line %4s", bufnr
+                                                              \, bufattr
+                                                              \, bufname
+                                                              \, buflnr)
+        call add(PrintFileList, line)
+        call add(s:bufSelectCurrentFileList, bufnr)
+        if bufname(bufnr) == bufname("%")
+            let currentbuffer_idx = len(PrintFileList)
+        endif
+    endfor
+    " open window and print the buffers filelist
     if !g:bufSelectOpenOnTop
         execute ":botright ".g:bufSelectWindowLines. " new"
     else
         execute ":topleft  ".g:bufSelectWindowLines. " new"
     endif
     let rc = append(0, PrintFileList)
+    " set cursor and cursorline
     delete
     hi CursorLine cterm=NONE ctermbg=DarkBlue
     setlocal cursorline
-    call setpos(".",[0,currentbuffer_idx,1])
+    call setpos(".", [0, currentbuffer_idx, 1])
+    " set buf-attributes to act like a command window
     setlocal nonumber
     setlocal buftype=nofile bufhidden=hide    nobuflisted  noswapfile nowrap
     setlocal foldcolumn=0   foldmethod=manual nofoldenable nospell
     setlocal readonly       nomodifiable
+    " disable jump and ":" command key
     map  <buffer> <c-w> <Nop>
     map  <buffer> <F1>  <Nop>
     nnoremap <buffer> _ :
@@ -172,5 +221,8 @@ function! BufSelect()
     map <buffer> <Enter>               _call BufSelectEnter()<CR>
     map <buffer>  q                    _call BufSelectLeave()<CR>
     execute "map <buffer> ".g:bufSelectToggleKey." _call BufSelectLeave()<CR>"
-    setlocal statusline=Press\ \"Enter\"\ to\ switch\ to\ the\ selected\ file\ or\ type\ \"q\"\ to\ quit
+    " we use the statusline for a little help message
+    let w:stl = 'Press "Enter" to switch to the selected file '
+    let w:stl.= 'or type "q" to quit'
+    setlocal statusline=%!w:stl
 endfunction
