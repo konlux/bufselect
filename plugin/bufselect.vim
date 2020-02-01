@@ -62,7 +62,8 @@
 "                 ":BufSelect" - Opens bufselect window
 "
 "               For more help see supplied documentation.
-"      History: -
+"      History: 
+"       - 01.02.2020 functions for Close and Save added - konlux
 "=============================================================================
  
 " Exit quickly if already running or when 'compatible' is set.
@@ -99,6 +100,7 @@ execute "nmap ".g:bufSelectToggleKey." <Esc>:call BufSelect()<CR>"
 let s:bufSelectCurrentWindow=0
 let s:RestoreWindowState=""
 let s:bufSelectCurrentFileList=[]
+let s:bufSelectCurrentFileAttr=[]
  
 " BufSelectEnter()
 " - clear bufselects buffer keymap
@@ -110,7 +112,7 @@ function! BufSelectEnter()
     let l:file = s:bufSelectCurrentFileList[line(".") - 1]
     mapclear  <buffer>
     mapclear! <buffer>
-    quit!
+    close!
     execute s:RestoreWindowState
     execute s:bufSelectCurrentWindow . "wincmd w"
     execute "buffer!" . l:file
@@ -126,11 +128,60 @@ endfunction
 function! BufSelectLeave()
     mapclear  <buffer>
     mapclear! <buffer>
+    set laststatus=2
     quit!
     execute s:RestoreWindowState
     execute s:bufSelectCurrentWindow . "wincmd w"
-    set laststatus=2
     echo
+endfunction
+ 
+" BufSelectClose()
+" - get bufnr of the selected line
+" - get bufattr of selected line
+" - close bufnr if no "+" in bufattr found
+" - close BufSelect and print a message
+function! BufSelectClose()
+    let l:file = s:bufSelectCurrentFileList[line(".") - 1]
+    let l:attr = s:bufSelectCurrentFileAttr[line(".") - 1]
+    let l:name = bufname(l:file)
+    if stridx(l:attr, "+") >= 0
+        echohl Error
+        echo "Please save (press \"s\") \"" . l:name . "\" before closing."
+        echohl None
+    else
+        " on each window jump to next buffer
+        " if current bufnr is the one to close
+        windo if bufnr('%')==l:file | silent bnext! | endif
+        execute "bdelete " . l:file
+        " delete file from arglist if it was a vim argument
+        execute "silent! argdelete " . l:name
+        call BufSelectLeave()
+        echohl MoreMsg
+        echo l:name . " closed!"
+        echohl None
+    endif
+endfunction
+ 
+" BufSelectSave()
+" - get bufnr of the selected line
+" - run bufdo and :w if current buffer = bufnr of selected line
+" - reload BufSelect
+" - set cursor to the line on which "s" was pressed
+function! BufSelectSave()
+    let l:lidx = line(".") - 1
+    let l:file = s:bufSelectCurrentFileList[l:lidx]
+    let l:attr = s:bufSelectCurrentFileAttr[l:lidx]
+    let l:name = bufname(l:file)
+    let l:curbuf = bufnr("%")
+    execute "silent buffer " . l:file "|:silent w"
+    execute "silent! buffer " . l:curbuf
+    let g:bufSelectLastStatus = l:name . " saved."
+    call BufSelectLeave()
+    call BufSelect()
+    call setpos(".", [0, l:lidx + 1, 1])
+    echohl MoreMsg
+    echo l:name . " saved."
+    echohl None
 endfunction
  
 " BufSelect()
@@ -148,6 +199,7 @@ function! BufSelect()
     endif
     let s:RestoreWindowState = winrestcmd()
     let s:bufSelectCurrentFileList=[]
+    let s:bufSelectCurrentFileAttr=[]
     let PrintFileList=[]
     let s:bufSelectCurrentWindow = winnr()
     let currentbuffer_idx = 0
@@ -171,9 +223,9 @@ function! BufSelect()
     else
         let filewidth = maxfilelen
     endif
-    "if filewidth <= 25
-    "    echomsg "Your window is to small to show the buffers correctly."
-    "endif
+    if filewidth + 21 <= 25
+        echo "Your window is to small to show the buffers correctly."
+    endif
     " get bufnr, bufattributes, bufname and current line number
     for bufline in split(buffers_output, '\n')
         let bufnr = str2nr(substitute(strpart(bufline, 0, 3), ' ', '', 'g'))
@@ -192,6 +244,7 @@ function! BufSelect()
                                                               \, buflnr)
         call add(PrintFileList, line)
         call add(s:bufSelectCurrentFileList, bufnr)
+        call add(s:bufSelectCurrentFileAttr, bufattr)
         if bufname(bufnr) == bufname("%")
             let currentbuffer_idx = len(PrintFileList)
         endif
@@ -217,12 +270,16 @@ function! BufSelect()
     map  <buffer> <c-w> <Nop>
     map  <buffer> <F1>  <Nop>
     nnoremap <buffer> _ :
-    nmap     <buffer> : <Nop>
+    "nmap     <buffer> : <Nop>
     map <buffer> <Enter>               _call BufSelectEnter()<CR>
+    map <buffer>  c                    _call BufSelectClose()<CR>
+    map <buffer>  s                    _call BufSelectSave()<CR>
     map <buffer>  q                    _call BufSelectLeave()<CR>
     execute "map <buffer> ".g:bufSelectToggleKey." _call BufSelectLeave()<CR>"
     " we use the statusline for a little help message
-    let w:stl = 'Press "Enter" to switch to the selected file '
+    let w:stl = 'Press "Enter" to switch to the selected file'
+    let w:stl.= ', "c" to close'
+    let w:stl.= ', "s" to save the file '
     let w:stl.= 'or type "q" to quit'
-    setlocal statusline=%!w:stl
+    setlocal statusline=%{w:stl}
 endfunction
